@@ -1,85 +1,137 @@
 import {
+	type FormControl,
 	type Submission,
-	getName,
-	parse as baseParse,
-	VALIDATION_SKIPPED,
-	VALIDATION_UNDEFINED,
+	formatPaths,
+	parse,
 } from '@conform-to/dom';
 import {
+	type IssueData,
+	type SafeParseReturnType,
+	type RefinementCtx,
+	type ZodTypeAny,
+	type ZodError,
+	type ZodErrorMap,
 	type input,
 	type output,
-	type RefinementCtx,
-	type SafeParseReturnType,
-	type ZodCustomIssue,
-	type ZodTypeAny,
-	type ZodErrorMap,
-	type IssueData,
+	type ZodIssue,
 	ZodIssueCode,
 } from 'zod';
 import { enableTypeCoercion } from './coercion';
 
-export function parse<Schema extends ZodTypeAny>(
+function getError<FormError>(
+	zodError: ZodError,
+	formatError: (issues: Array<ZodIssue>) => FormError,
+): Record<string, FormError | null> | null {
+	const result: Record<string, ZodIssue[] | null> = {};
+
+	for (const issue of zodError.errors) {
+		const name = formatPaths(issue.path);
+
+		switch (issue.message) {
+			case '__undefined__':
+				return null;
+			case '__skipped__':
+				result[name] = null;
+				break;
+			default: {
+				const issues = result[name];
+
+				if (issues !== null) {
+					if (issues) {
+						result[name] = issues.concat(issue);
+					} else {
+						result[name] = [issue];
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	return Object.entries(result).reduce<Record<string, FormError | null>>(
+		(result, [name, issues]) => {
+			result[name] = issues ? formatError(issues) : null;
+
+			return result;
+		},
+		{},
+	);
+}
+
+export function parseWithZod<Schema extends ZodTypeAny>(
 	payload: FormData | URLSearchParams,
-	config: {
-		schema: Schema | ((intent: string) => Schema);
+	options: {
+		schema: Schema | ((control: FormControl | null) => Schema);
 		async?: false;
 		errorMap?: ZodErrorMap;
 	},
-): Submission<output<Schema>>;
-export function parse<Schema extends ZodTypeAny>(
+): Submission<input<Schema>, string[], output<Schema>>;
+export function parseWithZod<Schema extends ZodTypeAny, FormError>(
 	payload: FormData | URLSearchParams,
-	config: {
-		schema: Schema | ((intent: string) => Schema);
+	options: {
+		schema: Schema | ((control: FormControl | null) => Schema);
+		async?: false;
+		errorMap?: ZodErrorMap;
+		formatError: (issues: Array<ZodIssue>) => FormError;
+	},
+): Submission<input<Schema>, FormError, output<Schema>>;
+export function parseWithZod<Schema extends ZodTypeAny>(
+	payload: FormData | URLSearchParams,
+	options: {
+		schema: Schema | ((control: FormControl | null) => Schema);
 		async: true;
 		errorMap?: ZodErrorMap;
 	},
-): Promise<Submission<output<Schema>>>;
-export function parse<Schema extends ZodTypeAny>(
+): Promise<Submission<input<Schema>, string[], output<Schema>>>;
+export function parseWithZod<Schema extends ZodTypeAny, FormError>(
 	payload: FormData | URLSearchParams,
-	config: {
-		schema: Schema | ((intent: string) => Schema);
+	options: {
+		schema: Schema | ((control: FormControl | null) => Schema);
+		async: true;
+		errorMap?: ZodErrorMap;
+		formatError: (issues: Array<ZodIssue>) => FormError;
+	},
+): Promise<Submission<input<Schema>, FormError, output<Schema>>>;
+export function parseWithZod<Schema extends ZodTypeAny, FormError>(
+	payload: FormData | URLSearchParams,
+	options: {
+		schema: Schema | ((control: FormControl | null) => Schema);
 		async?: boolean;
 		errorMap?: ZodErrorMap;
+		formatError?: (issues: Array<ZodIssue>) => FormError;
 	},
-): Submission<output<Schema>> | Promise<Submission<output<Schema>>> {
-	return baseParse<output<Schema>>(payload, {
-		resolve(payload, intent) {
+):
+	| Submission<input<Schema>, FormError | string[], output<Schema>>
+	| Promise<Submission<input<Schema>, FormError | string[], output<Schema>>> {
+	return parse(payload, {
+		resolve(payload, control) {
+			const errorMap = options.errorMap;
 			const schema = enableTypeCoercion(
-				typeof config.schema === 'function'
-					? config.schema(intent)
-					: config.schema,
+				typeof options.schema === 'function'
+					? options.schema(control)
+					: options.schema,
 			);
 
-			const resolveResult = (
-				result: SafeParseReturnType<input<Schema>, output<Schema>>,
-			): { value: output<Schema> } | { error: Record<string, string[]> } => {
-				if (result.success) {
-					return {
-						value: result.data,
-					};
-				}
-
+			const resolveSubmission = <Input, Output>(
+				result: SafeParseReturnType<Input, Output>,
+			) => {
 				return {
-					error: result.error.errors.reduce<Record<string, string[]>>(
-						(result, e) => {
-							const name = getName(e.path);
-
-							result[name] = [...(result[name] ?? []), e.message];
-
-							return result;
-						},
-						{},
-					),
+					value: result.success ? result.data : undefined,
+					error: !result.success
+						? getError<FormError | string[]>(
+								result.error,
+								options.formatError ??
+									((issues) => issues.map((issue) => issue.message)),
+						  )
+						: undefined,
 				};
 			};
 
-			return config.async
+			return options.async
 				? schema
-						.safeParseAsync(payload, { errorMap: config.errorMap })
-						.then(resolveResult)
-				: resolveResult(
-						schema.safeParse(payload, { errorMap: config.errorMap }),
-				  );
+						.safeParseAsync(payload, { errorMap })
+						.then((result) => resolveSubmission(result))
+				: resolveSubmission(schema.safeParse(payload, { errorMap }));
 		},
 	});
 }
@@ -106,21 +158,17 @@ export function refine(
 		/**
 		 * The message displayed when the validation fails.
 		 */
-		message?: string;
+		message: string;
 		/**
 		 * The path set to the zod issue.
 		 */
 		path?: IssueData['path'];
-		/**
-		 * Custom parameters
-		 */
-		params?: ZodCustomIssue['params'];
 	},
 ): void | Promise<void> {
 	if (typeof options.when !== 'undefined' && !options.when) {
 		ctx.addIssue({
 			code: ZodIssueCode.custom,
-			message: VALIDATION_SKIPPED,
+			message: '__skipped__',
 			path: options.path,
 		});
 		return;
@@ -133,8 +181,9 @@ export function refine(
 		// Validate only if the constraint is defined
 		ctx.addIssue({
 			code: ZodIssueCode.custom,
-			message: VALIDATION_UNDEFINED,
+			message: '__undefined__',
 			path: options.path,
+			fatal: true,
 		});
 		return;
 	}
@@ -148,7 +197,6 @@ export function refine(
 			code: ZodIssueCode.custom,
 			message: options.message,
 			path: options.path,
-			params: options.params,
 		});
 	};
 

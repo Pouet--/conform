@@ -1,20 +1,21 @@
 import {
-	type FieldConstraint,
-	type FieldsetConstraint,
+	type Constraint,
+	type FormControl,
 	type Submission,
-	parse as baseParse,
+	parse,
+	invariant,
 } from '@conform-to/dom';
 import * as yup from 'yup';
 
 export function getFieldsetConstraint<Source extends yup.AnyObjectSchema>(
 	source: Source,
-): FieldsetConstraint<yup.InferType<Source>> {
+): Record<string, Constraint> {
 	const description = source.describe();
 
 	return Object.fromEntries(
-		Object.entries(description.fields).map<[string, FieldConstraint]>(
+		Object.entries(description.fields).map<[string, Constraint]>(
 			([key, def]) => {
-				const constraint: FieldConstraint = {};
+				const constraint: Constraint = {};
 
 				switch (def.type) {
 					case 'string': {
@@ -61,6 +62,11 @@ export function getFieldsetConstraint<Source extends yup.AnyObjectSchema>(
 									constraint.required = true;
 									break;
 								case 'min':
+									invariant(
+										typeof constraint.min !== 'string',
+										'min is not a number',
+									);
+
 									if (
 										!constraint.min ||
 										constraint.min < Number(test.params?.min)
@@ -69,6 +75,10 @@ export function getFieldsetConstraint<Source extends yup.AnyObjectSchema>(
 									}
 									break;
 								case 'max':
+									invariant(
+										typeof constraint.max !== 'string',
+										'max is not a number',
+									);
 									if (
 										!constraint.max ||
 										constraint.max > Number(test.params?.max)
@@ -84,37 +94,37 @@ export function getFieldsetConstraint<Source extends yup.AnyObjectSchema>(
 				return [key, constraint];
 			},
 		),
-	) as FieldsetConstraint<yup.InferType<Source>>;
+	);
 }
 
-export function parse<Schema extends yup.AnyObjectSchema>(
+export function parseWithYup<Schema extends yup.AnyObjectSchema>(
 	payload: FormData | URLSearchParams,
 	config: {
-		schema: Schema | ((intent: string) => Schema);
+		schema: Schema | ((control: FormControl | null) => Schema);
 		async?: false;
 	},
-): Submission<yup.InferType<Schema>>;
-export function parse<Schema extends yup.AnyObjectSchema>(
+): Submission<yup.InferType<Schema>, string[]>;
+export function parseWithYup<Schema extends yup.AnyObjectSchema>(
 	payload: FormData | URLSearchParams,
 	config: {
-		schema: Schema | ((intent: string) => Schema);
+		schema: Schema | ((control: FormControl | null) => Schema);
 		async: true;
 	},
-): Promise<Submission<yup.InferType<Schema>>>;
-export function parse<Schema extends yup.AnyObjectSchema>(
+): Promise<Submission<yup.InferType<Schema>, string[]>>;
+export function parseWithYup<Schema extends yup.AnyObjectSchema>(
 	payload: FormData | URLSearchParams,
 	config: {
-		schema: Schema | ((intent: string) => Schema);
+		schema: Schema | ((control: FormControl | null) => Schema);
 		async?: boolean;
 	},
 ):
-	| Submission<yup.InferType<Schema>>
-	| Promise<Submission<yup.InferType<Schema>>> {
-	return baseParse<Submission<yup.InferType<Schema>>>(payload, {
-		resolve(payload, intent) {
+	| Submission<yup.InferType<Schema>, string[]>
+	| Promise<Submission<yup.InferType<Schema>, string[]>> {
+	return parse<Submission<yup.InferType<Schema>>, string[]>(payload, {
+		resolve(payload, control) {
 			const schema =
 				typeof config.schema === 'function'
-					? config.schema(intent)
+					? config.schema(control)
 					: config.schema;
 			const resolveData = (value: yup.InferType<Schema>) => ({ value });
 			const resolveError = (error: unknown) => {

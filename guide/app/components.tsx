@@ -1,12 +1,28 @@
 import type { RenderableTreeNodes } from '@markdoc/markdoc';
 import { renderers } from '@markdoc/markdoc';
-import { Link as RouterLink, useMatches } from '@remix-run/react';
+import {
+	Link as RouterLink,
+	useLocation,
+	useRouteLoaderData,
+} from '@remix-run/react';
 import * as React from 'react';
 import ReactSyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
 import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx';
 import css from 'react-syntax-highlighter/dist/esm/languages/prism/css';
 import darcula from 'react-syntax-highlighter/dist/esm/styles/prism/darcula';
-import { getChildren, isTag } from './markdoc';
+import type { loader as rootLoader } from '~/root';
+import type { loader as indexLoader } from '~/routes/_guide._index';
+import type { loader as pageLoader } from '~/routes/_guide.$page';
+import { getIdFromHeading } from './markdoc';
+import { useEffect, useLayoutEffect, useRef } from 'react';
+
+export interface Menu {
+	title: string;
+	links: Array<{
+		title: string;
+		to: string;
+	}>;
+}
 
 const style = {
 	...darcula,
@@ -16,13 +32,23 @@ const style = {
 	},
 };
 
+export const useSafeLayoutEffect =
+	typeof document === 'undefined' ? useEffect : useLayoutEffect;
+
 ReactSyntaxHighlighter.registerLanguage('tsx', tsx);
 ReactSyntaxHighlighter.registerLanguage('css', css);
 
 export function useRootLoaderData() {
-	const [root] = useMatches();
+	return useRouteLoaderData<typeof rootLoader>('root')!;
+}
 
-	return root.data;
+export function usePageLoaderData() {
+	const indexData = useRouteLoaderData<typeof indexLoader>(
+		'routes/_guide._index',
+	);
+	const pageData = useRouteLoaderData<typeof pageLoader>('routes/_guide.$page');
+
+	return pageData ?? indexData;
 }
 
 export function Sandbox({
@@ -34,7 +60,7 @@ export function Sandbox({
 	src: string;
 	children: React.ReactNode;
 }) {
-	const { repository, branch } = useRootLoaderData();
+	const { owner, repo, ref } = useRootLoaderData();
 	const [hydated, setHydrated] = React.useState(false);
 
 	React.useEffect(() => {
@@ -46,7 +72,7 @@ export function Sandbox({
 	}
 
 	const url = new URL(
-		`https://codesandbox.io/embed/github/${repository}/tree/${branch}${src}`,
+		`https://codesandbox.io/embed/github/${owner}/${repo}/tree/${ref}${src}`,
 	);
 
 	url.searchParams.set('editorsize', '60');
@@ -62,18 +88,7 @@ export function Sandbox({
 }
 
 export function Aside({ children }: { children: React.ReactNode }) {
-	return (
-		<aside
-			className={`
-				-ml-4 xl:ml-0 mb-8 xl:float-right xl:sticky xl:top-16 xl:w-72 xl:-mr-72 xl:pl-4 xl:py-8 xl:-mt-48 xl:max-h-[calc(100vh-4rem)] overflow-y-auto
-				prose-ul:list-none prose-ul:m-0 prose-ul:pl-4 prose-li:m-0 prose-li:pl-0 prose-headings:pl-4
-				prose-a:block prose-a:py-2 prose-a:no-underline prose-a:font-normal prose-a:text-zinc-400 
-				hover:prose-a:text-white  
-			`}
-		>
-			{children}
-		</aside>
-	);
+	return <aside className="hidden">{children}</aside>;
 }
 
 export function Fence({
@@ -82,7 +97,7 @@ export function Fence({
 }: {
 	language: string;
 	children: string;
-}): React.ReactElement {
+}): React.ReactNode {
 	return (
 		<ReactSyntaxHighlighter
 			language={language}
@@ -99,13 +114,33 @@ export function Details({
 	children,
 }: {
 	summary: string;
-	children: React.ReactElement;
+	children: React.ReactNode;
 }) {
 	return (
 		<details className="border border-zinc-700 rounded p-4 my-6">
 			<summary>{summary}</summary>
 			{children}
 		</details>
+	);
+}
+
+export function List({
+	ordered,
+	children,
+}: {
+	ordered?: boolean;
+	children: React.ReactNode;
+}): React.ReactNode {
+	const ListTag = ordered ? 'ol' : 'ul';
+
+	return <ListTag className="py-2">{children}</ListTag>;
+}
+
+export function Item({ children }: { children: React.ReactNode }) {
+	return (
+		<li className="relative before:content-['-_'] before:absolute before:left-0 before:text-zinc-400 py-1 px-4 text-zinc-200">
+			{children}
+		</li>
 	);
 }
 
@@ -117,28 +152,131 @@ export function Heading({
 	children: React.ReactNode;
 }) {
 	const HeadingTag = `h${level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
-	const id =
-		typeof children === 'string'
-			? children.replace(/[?]/g, '').replace(/\s+/g, '-').toLowerCase()
-			: '';
+	const id = typeof children === 'string' ? getIdFromHeading(children) : '';
 
 	return (
 		<HeadingTag
 			id={id}
-			className="-mt-20 pt-20 lg:-mt-24 lg:pt-24 prose-a:inline-block prose-img:m-0"
+			className={
+				level === 1
+					? 'text-xl xl:text-3xl pt-4 pb-6 xl:pt-4 xl:pb-2 xl:mb-8 uppercase tracking-wider'
+					: 'text-md xl:text-xl pt-40 -mt-32 pb-2 mb-4 xl:mt-auto xl:pt-8 xl:pb-4 xl:mb-6 border-b border-dotted border-zinc-200 '
+			}
 		>
+			{level > 1 ? (
+				<RouterLink
+					className="text-zinc-400 hover:text-zinc-200 mr-4"
+					to={`#${id}`}
+				>
+					#
+				</RouterLink>
+			) : null}
 			{children}
 		</HeadingTag>
 	);
 }
 
+export function Paragraph({ children }: { children: React.ReactNode }) {
+	return <p className="py-2">{children}</p>;
+}
+
+export function MainNavigation({ menus }: { menus: Menu[] }) {
+	const location = useLocation();
+	const detailsRef = useRef<HTMLDetailsElement>(null);
+	const currentPage = menus.reduce((result, menu) => {
+		if (!result) {
+			const link = menu.links.find((link) => link.to === location.pathname);
+
+			if (link) {
+				return `${menu.title} / ${link.title}`;
+			}
+		}
+
+		return result;
+	}, '');
+
+	useSafeLayoutEffect(() => {
+		if (detailsRef.current) {
+			detailsRef.current.open = false;
+		}
+	}, [location]);
+
+	return (
+		<>
+			<details
+				ref={detailsRef}
+				className="xl:hidden peer block py-4 bg-zinc-950 open:bg-zinc-700 -mx-8 px-8"
+			>
+				<summary className="list-none">{currentPage}</summary>
+			</details>
+			<div className="hidden peer-open:block xl:block overflow-y-auto bg-zinc-950 xl:bg-inherit -mx-8 px-8 xl:mx-0 xl:px-0">
+				<Navigation
+					menus={menus}
+					backgroundClassName="bg-zinc-950 xl:bg-zinc-900"
+					isActiveLink={(link) => link === location.pathname}
+				/>
+			</div>
+		</>
+	);
+}
+
+export function Navigation({
+	menus,
+	backgroundClassName = 'bg-zinc-900',
+	isActiveLink,
+}: {
+	menus: Menu[];
+	backgroundClassName?: string;
+	isActiveLink?: (link: string) => boolean;
+}) {
+	return (
+		<nav>
+			{menus.map((nav) => (
+				<div key={nav.title} className="relative">
+					<div
+						className={`sticky top-0 ${backgroundClassName} z-10 pt-8 xl:pt-4 pb-1`}
+					>
+						{nav.title}
+					</div>
+					<ul className="pt-4 xl:pt-4">
+						{nav.links.map((link) => (
+							<Item key={link.title}>
+								<Link
+									className={`block py-1 -my-1 ${
+										isActiveLink?.(link.to)
+											? `text-white`
+											: `text-zinc-400 hover:text-zinc-200`
+									}`}
+									href={link.to}
+								>
+									{link.title}
+								</Link>
+							</Item>
+						))}
+					</ul>
+				</div>
+			))}
+		</nav>
+	);
+}
+
+export function Strong({ children }: { children: React.ReactNode }) {
+	return (
+		<span className="before:content-['**'] after:content-['**'] before:text-zinc-400 after:text-zinc-400">
+			{children}
+		</span>
+	);
+}
+
 export function Link({
 	href,
+	className = "px-1 before:content-['['] after:content-[']'] before:text-zinc-400 after:text-zinc-400 before:hover:text-zinc-200 after:hover:text-zinc-200",
 	title,
 	children,
 }: {
 	href: string;
-	title: string;
+	className?: string;
+	title?: string;
 	children: React.ReactNode;
 }) {
 	const origin = 'https://conform.guide';
@@ -150,7 +288,7 @@ export function Link({
 		url.startsWith('//')
 	) {
 		return (
-			<a href={url} title={title}>
+			<a className={className} href={url} title={title}>
 				{children}
 			</a>
 		);
@@ -167,32 +305,36 @@ export function Link({
 	}
 
 	return (
-		<RouterLink to={to} title={title} prefetch="intent">
+		<RouterLink className={className} to={to} title={title} prefetch="intent">
 			{children}
 		</RouterLink>
 	);
 }
 
-export function Markdown({ content }: { content: RenderableTreeNodes }) {
-	const hasSidebar =
-		typeof getChildren(content).find(
-			(node) => isTag(node) && node.name === 'Aside',
-		) !== 'undefined';
-
+export function Code({ content }: { content: string }) {
 	return (
-		<section
-			className={`prose prose-invert max-w-none prose-pre:!mt-6 prose-pre:!mb-8 prose-img:inline-block prose-img:m-0 ${
-				hasSidebar ? 'xl:pr-72' : ''
-			}`}
-		>
+		<code className="text-white before:content-['`'] after:content-['`'] before:text-zinc-400 after:text-zinc-400">
+			{content}
+		</code>
+	);
+}
+
+export function Markdown({ content }: { content: RenderableTreeNodes }) {
+	return (
+		<section className="py-4">
 			{renderers.react(content, React, {
 				components: {
 					Aside,
 					Sandbox,
 					Details,
 					Fence,
+					List,
+					Item,
 					Heading,
+					Paragraph,
 					Link,
+					Code,
+					Strong,
 				},
 			})}
 		</section>

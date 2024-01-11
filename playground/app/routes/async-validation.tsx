@@ -1,5 +1,10 @@
-import { conform, useForm } from '@conform-to/react';
-import { parse, refine } from '@conform-to/zod';
+import {
+	type FormControl,
+	getFormProps,
+	getInputProps,
+	useForm,
+} from '@conform-to/react';
+import { parseWithZod, refine } from '@conform-to/zod';
 import type { ActionArgs, LoaderArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { Form, useActionData, useLoaderData } from '@remix-run/react';
@@ -7,7 +12,7 @@ import { z } from 'zod';
 import { Playground, Field } from '~/components';
 
 function createSchema(
-	intent: string,
+	control: FormControl | null,
 	constraints: {
 		isEmailUnique?: (email: string) => Promise<boolean>;
 	} = {},
@@ -21,7 +26,9 @@ function createSchema(
 				z.string().superRefine((email, ctx) =>
 					refine(ctx, {
 						validate: () => constraints.isEmailUnique?.(email),
-						when: intent === 'validate/email' || intent === 'submit',
+						when:
+							!control ||
+							(control.type === 'validate' && control.payload.name === 'email'),
 						message: 'Email is already used',
 					}),
 				),
@@ -42,9 +49,9 @@ export async function loader({ request }: LoaderArgs) {
 
 export async function action({ request }: ActionArgs) {
 	const formData = await request.formData();
-	const submission = await parse(formData, {
-		schema: (intent) =>
-			createSchema(intent, {
+	const submission = await parseWithZod(formData, {
+		schema: (control) =>
+			createSchema(control, {
 				isEmailUnique(email) {
 					return new Promise((resolve) => {
 						setTimeout(() => {
@@ -57,33 +64,33 @@ export async function action({ request }: ActionArgs) {
 		async: true,
 	});
 
-	return json(submission);
+	return json(submission.reply());
 }
 
 export default function EmployeeForm() {
 	const { noClientValidate } = useLoaderData<typeof loader>();
-	const lastSubmission = useActionData<typeof action>();
-	const [form, { email, title }] = useForm({
-		lastSubmission,
+	const lastResult = useActionData<typeof action>();
+	const [form, fields] = useForm({
+		lastResult,
 		onValidate: !noClientValidate
 			? ({ formData }) =>
-					parse(formData, {
-						schema: (intent) => createSchema(intent),
+					parseWithZod(formData, {
+						schema: (control) => createSchema(control),
 					})
 			: undefined,
 	});
 
 	return (
-		<Form method="post" {...form.props}>
-			<Playground title="Employee Form" lastSubmission={lastSubmission}>
-				<Field label="Email" config={email}>
+		<Form method="post" {...getFormProps(form)}>
+			<Playground title="Employee Form" result={lastResult}>
+				<Field label="Email" meta={fields.email}>
 					<input
-						{...conform.input(email, { type: 'email' })}
+						{...getInputProps(fields.email, { type: 'email' })}
 						autoComplete="off"
 					/>
 				</Field>
-				<Field label="Title" config={title}>
-					<input {...conform.input(title, { type: 'text' })} />
+				<Field label="Title" meta={fields.title}>
+					<input {...getInputProps(fields.title, { type: 'text' })} />
 				</Field>
 			</Playground>
 		</Form>

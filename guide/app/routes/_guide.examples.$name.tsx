@@ -1,26 +1,27 @@
 import {
-	type LoaderArgs,
+	type LoaderFunctionArgs,
 	type HeadersFunction,
 	type MetaFunction,
 	json,
 } from '@remix-run/cloudflare';
 import { useLoaderData } from '@remix-run/react';
-import { getFileContent } from '~/context';
 import { parse } from '~/markdoc';
 import { Markdown } from '~/components';
-import { formatTitle } from '~/util';
+import { formatTitle, getFileContent } from '~/util';
 
 export const headers: HeadersFunction = ({ loaderHeaders }) => {
 	return loaderHeaders;
 };
 
 export const meta: MetaFunction = ({ params }) => {
-	return {
-		title: `Conform Guide - ${formatTitle(params.name ?? '')} example`,
-	};
+	return [
+		{
+			title: `Conform Guide - ${formatTitle(params.name ?? '')} example`,
+		},
+	];
 };
 
-export async function loader({ params, context }: LoaderArgs) {
+export async function loader({ params, context }: LoaderFunctionArgs) {
 	const readme = await getFileContent(
 		context,
 		`examples/${params.name}/README.md`,
@@ -28,7 +29,7 @@ export async function loader({ params, context }: LoaderArgs) {
 
 	return json(
 		{
-			content: parse(atob(readme)),
+			content: parse(readme),
 		},
 		{
 			headers: {
